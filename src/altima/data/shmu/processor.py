@@ -55,6 +55,10 @@ class TemperatureParserSimple:
     (to remove thin lines) and/or after mapping (to smooth the temperature map).
     """
     rgb_to_temp = {
+        (32, 89, 230): -6,
+        (16, 107, 242): -5,
+        (0, 125, 254): -4,
+        (0, 157, 254): -3,
         (0, 190, 255): -2,
         (84, 221, 254): -1,
         (168, 254, 254): 0,
