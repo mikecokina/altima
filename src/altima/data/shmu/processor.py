@@ -18,6 +18,7 @@ class BaseParser(ABC):
 
     BBOX: Tuple[float, float, float, float]
     RGB_TO_VALUE: Dict[Tuple[int, int, int], float]
+    OUTPUT_SIZE = (848, 450)
 
     @classmethod
     def _build_palette_lab(cls):
@@ -56,6 +57,15 @@ class BaseParser(ABC):
         """
         bbox = bbox or self.BBOX
         arr = self._load_and_crop(img_path, bbox)
+
+        # ── Resize to self.OUTPUT_SIZE (expects (width, height)) ──
+        # convert to PIL image (uint8)
+        im = Image.fromarray(arr.astype(np.uint8))
+        # resize with NEAREST so your palette indices stay intact
+        im = im.resize(self.OUTPUT_SIZE, resample=Image.Resampling.NEAREST)
+        # back to numpy; note: im.size==(width,height) → arr.shape==(height,width)
+        arr = np.array(im)
+
         h, w, _ = arr.shape
 
         # Pre-filter
