@@ -185,6 +185,36 @@ class Rainfall1HParser(BaseParser):
     }
 
 
+class LongLatToXY:
+    mapper = {
+        # y, x => lat, long
+        (120, 812): (49.087964, 22.565644),
+        (190, 81): (48.878368, 17.201750),
+        (31, 387): (49.613878, 19.467744),
+        (406, 312): (47.827059, 18.855583),
+        # (119, 473): (49.179446, 20.087768),
+    }
+
+    def __init__(self):
+        pixel_coords = []
+        geo_coords = []
+
+        for (py, px), (lat, lon) in self.mapper.items():
+            pixel_coords.append([px, py, 1])  # x, y, 1
+            geo_coords.append([lon, lat])  # lon, lat
+
+        pixel_coords = np.array(pixel_coords)
+        geo_coords = np.array(geo_coords)
+
+        # Solve least squares for affine transform
+        self.affine_matrix, residuals, rank, s = np.linalg.lstsq(pixel_coords, geo_coords, rcond=None)
+
+    def xy_to_latlon(self, x, y):
+        px_vec = np.array([x, y, 1])
+        lon, lat = px_vec @ self.affine_matrix
+        return lat, lon
+
+
 if __name__ == "__main__":
     img_path_ = "/home/mike/Data/meteo/temperature/2025-04-26/T2M_oper_iso_R7_202504260100-0000.png"
     bbox_ = (0, 25, 848, 475)
@@ -203,3 +233,5 @@ if __name__ == "__main__":
     temp_map_ = TemperatureParser.rescale_to_255(temp_map_)
     Image.fromarray(temp_map_).convert('RGB').save("temperature_map.png")
 
+    p = LongLatToXY()
+    print(p.xy_to_latlon(459, 337))
