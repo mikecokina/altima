@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker, Session
-from altima.data.shmu.model import Base, RadarImage, TemperatureImage, HumidityImage
+from altima.data.shmu.model import Base, RadarImage, TemperatureImage, HumidityImage, Rainfall1HImage
 
 
 def init_db(db_url: str = 'sqlite:///shmu.db') -> create_engine:
@@ -82,13 +82,7 @@ class RadarImageCRUD(BaseCRUD):
         super().__init__(session, RadarImage)
 
 
-class TemperatureImageCRUD(BaseCRUD):
-    """
-    CRUD for TemperatureImage, plus helper to fetch the latest timestamp.
-    """
-    def __init__(self, session: Session):
-        super().__init__(session, TemperatureImage)
-
+class IncaCRUD(BaseCRUD):
     def get_last_dt(self) -> int:
         """
         Return the maximum dt_utc in the table, or 0 if empty.
@@ -97,19 +91,29 @@ class TemperatureImageCRUD(BaseCRUD):
         return last or 0
 
 
-class HumidityImageCRUD(BaseCRUD):
+class TemperatureImageCRUD(IncaCRUD):
+    """
+    CRUD for TemperatureImage, plus helper to fetch the latest timestamp.
+    """
+    def __init__(self, session: Session):
+        super().__init__(session, TemperatureImage)
+
+
+class HumidityImageCRUD(IncaCRUD):
     """
     CRUD for HumidityImage, plus helper to fetch the latest timestamp.
     """
     def __init__(self, session: Session):
         super().__init__(session, HumidityImage)
 
-    def get_last_dt(self) -> int:
-        """
-        Return the maximum dt_utc in the humidity_images table, or 0 if empty.
-        """
-        last = self.session.query(func.max(self.model.dt_utc)).scalar()
-        return last or 0
+
+class Rainfall1HImageCRUD(IncaCRUD):
+    """
+    CRUD for Rainfall1HImage, plus helper to fetch the latest timestamp.
+    """
+    def __init__(self, session: Session):
+        super().__init__(session, Rainfall1HImage)
+
 
 # if __name__ == '__main__':
 #     # Example usage:

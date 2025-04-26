@@ -137,6 +137,7 @@ class TemperatureParser(BaseParser):
         (238, 172, 36): 23,
     }
 
+
 class HumidityParser(BaseParser):
     RGB_TO_VALUE = {
         (255, 102, 0): 20,
@@ -158,11 +159,37 @@ class HumidityParser(BaseParser):
     }
 
 
+class Rainfall1HParser(BaseParser):
+    RGB_TO_VALUE = {
+        (255, 255, 255): 0.0,
+        (226, 226, 226): 0.1,
+        (203, 203, 203): 0.2,
+        (189, 189, 189): 0.5,
+        (147, 147, 147): 0.8,
+        (166, 254, 255): 1.0,
+        (0, 255, 255): 1.5,
+        (7, 189, 255): 2.0,
+        (46, 130, 255): 3.0,
+        (0, 85, 255): 4.0,
+        (140, 255, 144): 5.0,
+        (137, 230, 143): 7.0,
+        (86, 214, 125): 10.0,
+        (85, 170, 0): 15.0,
+        (0, 116, 0): 20.0,
+        (214, 255, 33): 25.0,
+        (248, 255, 41): 30.0,
+        (255, 229, 29): 35.0,
+        (255, 170, 127): 40.0,
+        (255, 85, 0): 45.0,
+        (255, 0, 0): 50.0
+    }
+
+
 if __name__ == "__main__":
-    img_path_ = "/home/mike/Data/meteo/humidity/2025-04-26/RH_oper_iso_R7_202504260900-0000.png"
+    img_path_ = "/home/mike/Data/meteo/temperature/2025-04-26/T2M_oper_iso_R7_202504260100-0000.png"
     bbox_ = (0, 25, 848, 475)
 
-    temp_map_ = HumidityParser().parse_rgb(
+    temp_map_ = TemperatureParser().parse_rgb(
         img_path=img_path_,
         bbox=bbox_,
         pre_filter='median',  # 'median', 'owa', or None
@@ -175,3 +202,4 @@ if __name__ == "__main__":
 
     temp_map_ = TemperatureParser.rescale_to_255(temp_map_)
     Image.fromarray(temp_map_).convert('RGB').save("temperature_map.png")
+

@@ -4,7 +4,7 @@ import requests
 from datetime import datetime, timedelta, timezone
 from tqdm import tqdm
 
-from altima.data.shmu.crud import init_db, get_session, TemperatureImageCRUD, HumidityImageCRUD
+from altima.data.shmu.crud import init_db, get_session, TemperatureImageCRUD, HumidityImageCRUD, Rainfall1HImageCRUD
 
 from altima.data.shmu.model import RadarImage
 
@@ -223,6 +223,20 @@ class HumidityDataLoader(BaseHourlyLoader):
         return datetime(2025, 4, 25, 12)
 
 
+class Rainfall1HDataLoader(BaseHourlyLoader):
+    """
+    Loader for RH humidity images.
+    """
+    IMAGE_PATH = '/data/datainca/TP0100/R7'
+    FILE_TEMPLATE = 'TP0100_oper_iso_R7_{dt_str}-0000.png'
+    SUBFOLDER = 'rainfall_1h'
+    CRUD_CLASS = Rainfall1HImageCRUD
+
+    def fallback_start(self) -> datetime:
+        # Default start: 2025-04-25 12:00 UTC
+        return datetime(2025, 4, 25, 12)
+
+
 if __name__ == '__main__':
-    loader = HumidityDataLoader()
+    loader = Rainfall1HDataLoader()
     loader.run()

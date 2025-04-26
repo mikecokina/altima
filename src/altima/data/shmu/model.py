@@ -29,3 +29,11 @@ class HumidityImage(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     fname = Column(String, nullable=False, unique=True)
     dt_utc = Column(Integer, nullable=False, index=True)
+
+
+class Rainfall1HImage(Base):
+    __tablename__ = 'rainfall_1h_images'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    fname = Column(String, nullable=False, unique=True)
+    dt_utc = Column(Integer, nullable=False, index=True)
