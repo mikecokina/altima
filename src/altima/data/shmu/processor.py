@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Tuple, Optional, Dict
 
 from PIL import Image
@@ -16,6 +16,7 @@ class BaseParser(ABC):
     Subclasses must define an RGB_TO_VALUE dict.
     """
 
+    BBOX: Tuple[float, float, float, float]
     RGB_TO_VALUE: Dict[Tuple[int, int, int], float]
 
     @classmethod
@@ -53,6 +54,7 @@ class BaseParser(ABC):
         3) Map each pixel to nearest palette value
         4) Optionally post-filter
         """
+        bbox = bbox or self.BBOX
         arr = self._load_and_crop(img_path, bbox)
         h, w, _ = arr.shape
 
@@ -104,6 +106,7 @@ class BaseParser(ABC):
 
 
 class TemperatureParser(BaseParser):
+    BBOX = (0, 25, 848, 475)
     RGB_TO_VALUE = {
         (32, 89, 230): -6,
         (16, 107, 242): -5,
@@ -139,6 +142,7 @@ class TemperatureParser(BaseParser):
 
 
 class HumidityParser(BaseParser):
+    BBOX = (0, 25, 848, 475)
     RGB_TO_VALUE = {
         (255, 102, 0): 20,
         (254, 126, 0): 25,
@@ -160,6 +164,7 @@ class HumidityParser(BaseParser):
 
 
 class Rainfall1HParser(BaseParser):
+    BBOX = (0, 25, 848, 475)
     RGB_TO_VALUE = {
         (255, 255, 255): 0.0,
         (226, 226, 226): 0.1,
@@ -206,7 +211,7 @@ class LongLatToXY:
         pixel_coords = np.array(pixel_coords)
         geo_coords = np.array(geo_coords)
 
-        # Solve least squares for affine transform
+        # Solve the least squares for affine transform
         self.affine_matrix, residuals, rank, s = np.linalg.lstsq(pixel_coords, geo_coords, rcond=None)
 
     def xy_to_latlon(self, x, y):
@@ -217,11 +222,9 @@ class LongLatToXY:
 
 if __name__ == "__main__":
     img_path_ = "/home/mike/Data/meteo/temperature/2025-04-26/T2M_oper_iso_R7_202504260100-0000.png"
-    bbox_ = (0, 25, 848, 475)
 
     temp_map_ = TemperatureParser().parse_rgb(
         img_path=img_path_,
-        bbox=bbox_,
         pre_filter='median',  # 'median', 'owa', or None
         pre_size=5,
         owa_pre_alpha=0.5,
