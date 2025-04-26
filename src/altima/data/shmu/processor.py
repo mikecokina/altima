@@ -12,7 +12,8 @@ class TemperatureParserSimple:
     """
     Load a heatmap image (optionally cropped), map every pixel’s RGB color
     to the nearest legend temperature, and return a 2D array of temperatures.
-    Optionally apply a median filter to smooth the result.
+    Optionally apply a median filter before mapping (to eat thin lines)
+    and/or after mapping (to smooth the result).
     """
     # exact legend RGB → temperature
     rgb_to_temp = {
@@ -66,33 +67,45 @@ class TemperatureParserSimple:
         cls,
         img_path: str,
         bbox: tuple = None,
-        apply_median: bool = False,
-        median_size: int = 3
+        *,
+        median_pre: bool = False,
+        pre_size: int = 3,
+        median_post: bool = False,
+        post_size: int = 3,
     ) -> np.ndarray:
         """
         1) Load & (optional) crop
-        2) Map every pixel’s RGB to the nearest legend temperature
-        3) Optionally apply a median filter over the temperature map
+        2) Optionally median-filter the RGB image (median_pre)
+        3) Map every pixel’s RGB to the nearest legend temperature in Lab space
+        4) Optionally median-filter the temperature map (median_post)
         Returns a height×width float array of temperatures.
         """
         arr = cls._load_and_crop(img_path, bbox)
+
+        # 2) pre-process median on RGB if requested
+        if median_pre:
+            arr = np.stack([
+                median_filter(arr[:, :, 0], size=pre_size),
+                median_filter(arr[:, :, 1], size=pre_size),
+                median_filter(arr[:, :, 2], size=pre_size),
+            ], axis=2).astype(np.uint8)
+
         height, width, _ = arr.shape
 
-        # Flatten and normalize
+        # 3) Flatten and normalize, then convert to Lab
         flat_rgb = arr.reshape(-1, 3).astype(float) / 255.0
-        # Convert to Lab
         lab = rgb2lab(flat_rgb.reshape(-1, 1, 3)).reshape(-1, 3)
 
-        # Build (or reuse) the palette tree
+        # 4) Build (or reuse) the palette tree and query
         tree, temps = cls._build_palette_lab()
         _, idx = tree.query(lab, k=1)
 
         # Remap back to 2D
         temp_map = temps[idx].reshape(height, width)
 
-        # Apply median filter if requested
-        if apply_median:
-            temp_map = median_filter(temp_map, size=median_size)
+        # 5) post-process median on temperature if requested
+        if median_post:
+            temp_map = median_filter(temp_map, size=post_size)
 
         return temp_map
 
@@ -112,20 +125,23 @@ class TemperatureParserSimple:
         return scaled.clip(0, 255).astype(np.uint8)
 
 
-# if __name__ == "__main__":
-#     # --- user settings ---
-#     img_path_ = "/home/mike/Data/meteo/temperature/2025-04-25/T2M_oper_iso_R7_202504251500-0000.png"
-#     bbox_ = (0, 25, 848, 475)
-#
-#     # parse with optional median filtering
-#     temperature_array = TemperatureParserSimple.parse_rgb(
-#         img_path_,
-#         bbox_,
-#         apply_median=True,
-#         median_size=3
-#     )
-#
-#     # rescale and save
-#     scaled_ = TemperatureParserSimple.rescale_to_255(temperature_array)
-#     Image.fromarray(scaled_).convert('RGB').save("temperature_map.png")
-#     print("Saved temperature_map.png")
+if __name__ == "__main__":
+    # --- user settings ---
+    img_path_ = "/home/mike/Data/meteo/temperature/2025-04-25/" \
+                "T2M_oper_iso_R7_202504251500-0000.png"
+    bbox_ = (0, 25, 848, 475)
+
+    # parse with optional median filtering both before and after
+    temperature_array = TemperatureParserSimple.parse_rgb(
+        img_path_,
+        bbox_,
+        median_pre=True,
+        pre_size=5,
+        median_post=True,
+        post_size=3
+    )
+
+    # rescale and save
+    scaled_ = TemperatureParserSimple.rescale_to_255(temperature_array)
+    Image.fromarray(scaled_).convert('RGB').save("temperature_map.png")
+    print("Saved temperature_map.png")
