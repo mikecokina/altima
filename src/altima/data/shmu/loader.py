@@ -1,9 +1,10 @@
+from abc import ABC, abstractmethod
 from pathlib import Path
 import requests
 from datetime import datetime, timedelta, timezone
 from tqdm import tqdm
 
-from altima.data.shmu.crud import init_db, get_session, TemperatureImageCRUD
+from altima.data.shmu.crud import init_db, get_session, TemperatureImageCRUD, HumidityImageCRUD
 
 from altima.data.shmu.model import RadarImage
 
@@ -110,17 +111,20 @@ class RadarDataLoader:
             session.close()
 
 
-class TemperatureDataLoader:
+class BaseHourlyLoader(ABC):
     """
-    Loader for T2M temperature images: downloads hourly images,
-    stores files and metadata (fname, dt_utc) in the database.
+    Abstract base for hourly image loaders.
+    Subclasses must define IMAGE_PATH, FILE_TEMPLATE, SUBFOLDER, CRUD_CLASS,
+    and implement fallback_start().
     """
-
-    IMAGE_PATH = '/data/datainca/T2M/R7'
+    IMAGE_PATH: str
+    FILE_TEMPLATE: str
+    SUBFOLDER: str
+    CRUD_CLASS: type
 
     def __init__(
         self,
-        base_dir: Path = Path('/home/mike/Data/meteo'),
+        base_dir: Path = Path(BASE_DATA_DIR),
         db_url: str = 'sqlite:///shmu.db',
         timeout: int = 10
     ):
@@ -128,42 +132,48 @@ class TemperatureDataLoader:
         self.db_url = db_url
         self.timeout = timeout
 
+    @abstractmethod
+    def fallback_start(self) -> datetime:
+        """
+        Return a naive UTC datetime to start from if no records exist.
+        """
+        ...
+
     def run(self):
-        # Init DB session and repo
+        # Initialize DB and repository
         engine = init_db(self.db_url)
         session = get_session(engine)
-        repo = TemperatureImageCRUD(session)
+        repo = self.CRUD_CLASS(session)
 
         # Determine start datetime (UTC)
         last_ts = repo.get_last_dt()
         if last_ts:
             start_dt = datetime.fromtimestamp(last_ts, timezone.utc) + timedelta(hours=1)
         else:
-            # Mock start if no records
-            start_dt = datetime(2025, 4, 25, 12, tzinfo=timezone.utc)
+            start_dt = self.fallback_start().replace(tzinfo=timezone.utc)
         start_dt = start_dt.replace(minute=0, second=0, microsecond=0)
 
         # Determine end datetime (current hour UTC)
         end_dt = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
-        # Compute total hours to process and iterate with tqdm
+        # Iterate hourly with progress bar
         total_hours = int((end_dt - start_dt) / timedelta(hours=1))
-        for i in tqdm(range(total_hours + 1), desc='TempImages', unit='hours'):
+        for i in tqdm(range(total_hours + 1), desc=self.SUBFOLDER, unit='hours'):
             dt = start_dt + timedelta(hours=i)
             dt_str = dt.strftime('%Y%m%d%H%M')
-            fname = f"T2M_oper_iso_R7_{dt_str}-0000.png"
+            fname = self.FILE_TEMPLATE.format(dt_str=dt_str)
 
             # Skip if already recorded
             if repo.get(fname=fname):
                 continue
 
-            # Prepare download URL and local path
+            # Build download URL and local path
             url = f"{BASE_HOST}{self.IMAGE_PATH}/{fname}"
-            date_dir = self.base_dir / 'temperature' / dt.strftime('%Y-%m-%d')
+            date_dir = self.base_dir / self.SUBFOLDER / dt.strftime('%Y-%m-%d')
             date_dir.mkdir(parents=True, exist_ok=True)
             file_path = date_dir / fname
 
-            # Download and save
+            # Download image
             try:
                 resp = requests.get(url, timeout=self.timeout)
                 if resp.status_code == 404:
@@ -172,18 +182,47 @@ class TemperatureDataLoader:
                 resp.raise_for_status()
                 with open(file_path, 'wb') as f:
                     f.write(resp.content)
-                # Record in DB
+
+                # Record metadata
                 repo.create({
-                    'fname': fname,
+                    'fname':  fname,
                     'dt_utc': int(dt.timestamp())
                 })
                 # print(f"Saved and recorded: {fname}")
-            except requests.RequestException as ex:
-                print(f"Error fetching {fname}: {ex}")
+            except requests.RequestException as e:
+                print(f"Error fetching {fname}: {e}")
 
         session.close()
 
 
+class TemperatureDataLoader(BaseHourlyLoader):
+    """
+    Loader for T2M temperature images.
+    """
+    IMAGE_PATH = '/data/datainca/T2M/R7'
+    FILE_TEMPLATE = 'T2M_oper_iso_R7_{dt_str}-0000.png'
+    SUBFOLDER = 'temperature'
+    CRUD_CLASS = TemperatureImageCRUD
+
+    def fallback_start(self) -> datetime:
+        # Default start: 2025-04-25 12:00 UTC
+        return datetime(2025, 4, 25, 12)
+
+
+class HumidityDataLoader(BaseHourlyLoader):
+    """
+    Loader for RH humidity images.
+    """
+    IMAGE_PATH = '/data/datainca/RH/R7'
+    FILE_TEMPLATE = 'RH_oper_iso_R7_{dt_str}-0000.png'
+    SUBFOLDER = 'humidity'
+    CRUD_CLASS = HumidityImageCRUD
+
+    def fallback_start(self) -> datetime:
+        # Default start: 2025-04-25 12:00 UTC
+        return datetime(2025, 4, 25, 12)
+
+
 if __name__ == '__main__':
-    loader = TemperatureDataLoader()
+    loader = HumidityDataLoader()
     loader.run()

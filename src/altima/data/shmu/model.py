@@ -21,3 +21,11 @@ class TemperatureImage(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     fname = Column(String, nullable=False, unique=True)
     dt_utc = Column(Integer, nullable=False, index=True)  # UTC timestamp parsed from filename
+
+
+class HumidityImage(Base):
+    __tablename__ = 'humidity_images'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    fname = Column(String, nullable=False, unique=True)
+    dt_utc = Column(Integer, nullable=False, index=True)
