@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-from typing import Tuple, Optional
+from abc import ABC, abstractmethod
+from typing import Tuple, Optional, Dict
 
 from PIL import Image
 import numpy as np
@@ -7,54 +7,104 @@ from scipy.spatial import cKDTree
 from scipy.ndimage import median_filter
 from skimage.color import rgb2lab
 
+from altima.data.shmu.utils import owa_edge_preserving_smooth_2d
 
-def owa_edge_preserving_smooth_2d(
-        data_2d: np.ndarray,
-        window_size: int = 9,
-        alpha: float = 1.0,
-        sigma_d: float = 2.0
-) -> np.ndarray:
+
+class BaseParser(ABC):
     """
-    Applies an adaptive edge-preserving smoothing filter (OWA-like) to a 2D array.
-    - Uses local median + MAD (median absolute deviation) for intensity weighting.
-    - Uses a Gaussian spatial weighting with std = sigma_d.
+    Abstract base for any RGB→value heatmap parser.
+    Subclasses must define an RGB_TO_VALUE dict.
     """
-    if window_size % 2 == 0:
-        raise ValueError("window_size must be an odd integer.")
 
-    height, width = data_2d.shape
-    half_win = window_size // 2
-    padded = np.pad(data_2d, pad_width=half_win, mode='edge')
+    RGB_TO_VALUE: Dict[Tuple[int, int, int], float]
 
-    coords = np.indices((window_size, window_size))
-    center = half_win
-    d2 = (coords[0] - center) ** 2 + (coords[1] - center) ** 2
-    spatial_kernel = np.exp(-d2 / (2.0 * sigma_d ** 2))
+    @classmethod
+    def _build_palette_lab(cls):
+        rgb = np.array(list(cls.RGB_TO_VALUE.keys()), dtype=float) / 255.0
+        lab = rgb2lab(rgb.reshape(-1, 1, 3)).reshape(-1, 3)
+        values = np.array(list(cls.RGB_TO_VALUE.values()), dtype=float)
+        tree = cKDTree(lab)
+        return tree, values
 
-    result = np.zeros_like(data_2d, dtype=np.float32)
-    for row in range(height):
-        for col in range(width):
-            window = padded[row:row + window_size, col:col + window_size]
-            local_median = np.median(window)
-            abs_devs = np.abs(window - local_median)
-            mad = np.median(abs_devs)
-            if mad < 1e-12:
-                mad = 1e-12
-            intensity_weight = np.exp(-0.5 * ((window - local_median) / (alpha * mad)) ** 2)
-            combined_weight = intensity_weight * spatial_kernel
-            combined_weight /= combined_weight.sum()
-            result[row, col] = np.sum(window * combined_weight)
-    return result
+    @staticmethod
+    def _load_and_crop(img_path: str, bbox: Optional[Tuple[int, int, int, int]] = None) -> np.ndarray:
+        img = Image.open(img_path).convert("RGB")
+        if bbox:
+            img = img.crop(bbox)
+        return np.array(img, dtype=np.uint8)
+
+    def parse_rgb(
+            self,
+            img_path: str,
+            bbox: Tuple[int, int, int, int] = None,
+            *,
+            pre_filter: Optional[str] = None,  # 'median', 'owa', or None
+            pre_size: int = 3,
+            owa_pre_alpha: float = 1.0,
+            owa_pre_sigma: float = 2.0,
+            post_filter: Optional[str] = None,  # 'median', 'owa', or None
+            post_size: int = 3,
+            owa_post_alpha: float = 1.0,
+            owa_post_sigma: float = 2.0,
+    ) -> np.ndarray:
+        """
+        1) Load & crop image
+        2) Optionally pre-filter
+        3) Map each pixel to nearest palette value
+        4) Optionally post-filter
+        """
+        arr = self._load_and_crop(img_path, bbox)
+        h, w, _ = arr.shape
+
+        # Pre-filter
+        if pre_filter == 'median':
+            arr = np.stack([
+                np.array(median_filter(arr[:, :, c], size=pre_size)).astype(np.uint8)
+                for c in range(3)
+            ], axis=2)
+        elif pre_filter == 'owa':
+            arr = np.stack([
+                owa_edge_preserving_smooth_2d(arr[:, :, c].astype(float),
+                                              window_size=pre_size,
+                                              alpha=owa_pre_alpha,
+                                              sigma_d=owa_pre_sigma)
+                for c in range(3)
+            ], axis=2).astype(np.uint8)
+
+        # RGB → Lab → nearest-value
+        flat_rgb = (arr.reshape(-1, 3).astype(float) / 255.0)
+        lab = rgb2lab(flat_rgb.reshape(-1, 1, 3)).reshape(-1, 3)
+        tree, values = self._build_palette_lab()
+        _, idx = tree.query(lab, k=1)
+        val_map = values[idx].reshape(h, w)
+
+        # Post-filter
+        if post_filter == 'median':
+            val_map = median_filter(val_map, size=post_size)
+        elif post_filter == 'owa':
+            val_map = owa_edge_preserving_smooth_2d(
+                val_map,
+                window_size=post_size,
+                alpha=owa_post_alpha,
+                sigma_d=owa_post_sigma
+            )
+
+        return val_map
+
+    @staticmethod
+    def rescale_to_255(val_map: np.ndarray) -> np.ndarray:
+        valid = ~np.isnan(val_map)
+        if not np.any(valid):
+            return np.zeros_like(val_map, dtype=np.uint8)
+        vmin, vmax = val_map[valid].min(), val_map[valid].max()
+        span = vmax - vmin if vmax > vmin else 1.0
+        scaled = (val_map - vmin) / span * 255.0
+        scaled[~valid] = 0
+        return np.clip(scaled, 0, 255).astype(np.uint8)
 
 
-class TemperatureParserSimple:
-    """
-    Load a heatmap image (optionally cropped), map every pixel’s RGB color
-    to the nearest legend temperature, and return a 2D array of temperatures.
-    You can optionally apply either a median or the OWA filter before mapping
-    (to remove thin lines) and/or after mapping (to smooth the temperature map).
-    """
-    rgb_to_temp = {
+class TemperatureParser(BaseParser):
+    RGB_TO_VALUE = {
         (32, 89, 230): -6,
         (16, 107, 242): -5,
         (0, 125, 254): -4,
@@ -87,105 +137,34 @@ class TemperatureParserSimple:
         (238, 172, 36): 23,
     }
 
-    @classmethod
-    def _build_palette_lab(cls):
-        rgb = np.array(list(cls.rgb_to_temp.keys()), dtype=float) / 255.0
-        lab = rgb2lab(rgb.reshape(-1, 1, 3)).reshape(-1, 3)
-        temps = np.array(list(cls.rgb_to_temp.values()), dtype=float)
-        tree = cKDTree(lab)
-        return tree, temps
-
-    @staticmethod
-    def _load_and_crop(img_path: str, bbox: Optional[Tuple[int, int, int, int]] = None) -> np.ndarray:
-        img = Image.open(img_path).convert("RGB")
-        if bbox:
-            img = img.crop(bbox)
-        return np.array(img, dtype=np.uint8)
-
-    @classmethod
-    def parse_rgb(
-            cls,
-            img_path: str,
-            bbox: Tuple[int, int, int, int] = None,
-            *,
-            pre_filter: Optional[str] = None,  # 'median', 'owa', or None
-            pre_size: int = 3,
-            owa_pre_alpha: float = 1.0,
-            owa_pre_sigma: float = 2.0,
-            post_filter: Optional[str] = None,  # 'median', 'owa', or None
-            post_size: int = 3,
-            owa_post_alpha: float = 1.0,
-            owa_post_sigma: float = 2.0,
-    ) -> np.ndarray:
-        """
-        1) Load & (optional) crop
-        2) Optionally apply pre_filter ('median' or 'owa')
-        3) Map every pixel’s RGB to the nearest legend temperature in Lab
-        4) Optionally apply post_filter ('median' or 'owa')
-        Returns a height×width float array of temperatures.
-        """
-        arr = cls._load_and_crop(img_path, bbox)
-        h, w, _ = arr.shape
-
-        # Pre-filter
-        if pre_filter == 'median':
-            arr = np.stack([
-                np.array(median_filter(arr[:, :, 0], size=pre_size), dtype=np.uint8),
-                np.array(median_filter(arr[:, :, 1], size=pre_size), dtype=np.uint8),
-                np.array(median_filter(arr[:, :, 2], size=pre_size), dtype=np.uint8),
-            ], axis=2).astype(np.uint8)
-        elif pre_filter == 'owa':
-            channels = []
-            for c in range(3):
-                channels.append(
-                    owa_edge_preserving_smooth_2d(
-                        arr[:, :, c].astype(float),
-                        window_size=pre_size,
-                        alpha=owa_pre_alpha,
-                        sigma_d=owa_pre_sigma
-                    )
-                )
-            arr = np.stack(channels, axis=2).astype(np.uint8)
-
-        # RGB → Lab → nearest-temperature
-        flat_rgb = arr.reshape(-1, 3).astype(float) / 255.0
-        lab = rgb2lab(flat_rgb.reshape(-1, 1, 3)).reshape(-1, 3)
-        tree, temps = cls._build_palette_lab()
-        _, idx = tree.query(lab, k=1)
-        temp_map = temps[idx].reshape(h, w)
-
-        # Post-filter
-        if post_filter == 'median':
-            temp_map = median_filter(temp_map, size=post_size)
-        elif post_filter == 'owa':
-            temp_map = owa_edge_preserving_smooth_2d(
-                temp_map,
-                window_size=post_size,
-                alpha=owa_post_alpha,
-                sigma_d=owa_post_sigma
-            )
-
-        return temp_map
-
-    @staticmethod
-    def rescale_to_255(temp_map: np.ndarray) -> np.ndarray:
-        valid = ~np.isnan(temp_map)
-        if not np.any(valid):
-            return np.zeros_like(temp_map, dtype=np.uint8)
-        vmin, vmax = np.nanmin(temp_map), np.nanmax(temp_map)
-        span = vmax - vmin if vmax > vmin else 1.0
-        scaled = (temp_map - vmin) / span * 255.0
-        scaled[~valid] = 0
-        return scaled.clip(0, 255).astype(np.uint8)
+class HumidityParser(BaseParser):
+    RGB_TO_VALUE = {
+        (255, 102, 0): 20,
+        (254, 126, 0): 25,
+        (254, 152, 0): 30,
+        (254, 177, 0): 35,
+        (254, 203, 0): 40,
+        (254, 228, 0): 45,
+        (254, 254, 0): 50,
+        (209, 240, 1): 55,
+        (164, 226, 2): 60,
+        (120, 212, 2): 65,
+        (75, 198, 3): 70,
+        (30, 184, 4): 75,
+        (26, 219, 121): 80,
+        (23, 255, 240): 85,
+        (21, 206, 245): 90,
+        (20, 158, 251): 95,
+    }
 
 
 if __name__ == "__main__":
-    img_path_ = "/home/mike/Data/meteo/temperature/2025-04-25/T2M_oper_iso_R7_202504251500-0000.png"
+    img_path_ = "/home/mike/Data/meteo/humidity/2025-04-26/RH_oper_iso_R7_202504260900-0000.png"
     bbox_ = (0, 25, 848, 475)
 
-    temp_map_ = TemperatureParserSimple.parse_rgb(
-        img_path_,
-        bbox_,
+    temp_map_ = HumidityParser().parse_rgb(
+        img_path=img_path_,
+        bbox=bbox_,
         pre_filter='median',  # 'median', 'owa', or None
         pre_size=5,
         owa_pre_alpha=0.5,
@@ -194,6 +173,5 @@ if __name__ == "__main__":
         post_size=3
     )
 
-    scaled_ = TemperatureParserSimple.rescale_to_255(temp_map_)
-    Image.fromarray(scaled_).convert('RGB').save("temperature_map.png")
-    print("Saved temperature_map.png")
+    temp_map_ = TemperatureParser.rescale_to_255(temp_map_)
+    Image.fromarray(temp_map_).convert('RGB').save("temperature_map.png")
