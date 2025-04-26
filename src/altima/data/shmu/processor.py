@@ -105,6 +105,43 @@ class BaseParser(ABC):
         return np.clip(scaled, 0, 255).astype(np.uint8)
 
 
+class RadarParser:
+    BBOX = (234, 119, 712, 372)
+    OUTPUT_SIZE = (848, 450)  # desired resolution
+    ANGLE = -2.2
+
+    def preprocessor(self, input_path, output_path, angle=None, bbox=None, output_size=None):
+        """
+        Preprocess image by rotating, cropping, and resizing.
+
+        Parameters:
+        - input_path: str, path to the input image file.
+        - output_path: str, path to save the processed image.
+        - angle: float, rotation angle in degrees (counter-clockwise).
+        - bbox: tuple of (left, upper, right, lower) for cropping.
+        - output_size: tuple of (width, height) for resizing.
+        """
+        angle = angle or self.ANGLE
+        bbox = bbox or self.BBOX
+        output_size = output_size or self.OUTPUT_SIZE
+
+        img = Image.open(input_path)
+
+        # Rotate (keep original resolution)
+        rotated = img.rotate(angle, resample=Image.Resampling.BICUBIC, expand=False)
+
+        # Crop by bounding box
+        cropped = rotated.crop(bbox)
+
+        # Resize to desired resolution
+        resized = cropped.resize(output_size, Image.Resampling.LANCZOS)
+
+        # Save result
+        resized.save(output_path)
+
+        return resized
+
+
 class TemperatureParser(BaseParser):
     BBOX = (0, 25, 848, 475)
     RGB_TO_VALUE = {
