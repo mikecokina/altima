@@ -7,6 +7,8 @@ import matplotlib
 
 matplotlib.use('TkAgg')
 
+DELTA_T_MULTIPLIER = 1
+
 
 # -------------------------------
 # 1. Domain & Simulation Setup
@@ -23,7 +25,7 @@ def setup_domain():
     cfl_x = delta_x / abs(vel_x) if vel_x != 0 else np.inf
     cfl_y = delta_y / abs(vel_y) if vel_y != 0 else np.inf
     cfl_z = delta_z / abs(vel_z) if vel_z != 0 else np.inf
-    delta_t = 0.5 * min(cfl_x, cfl_y, cfl_z)
+    delta_t = 0.5 * min(cfl_x, cfl_y, cfl_z) / DELTA_T_MULTIPLIER
     print(f"Δt = {delta_t:.2f} s per step")
 
     return num_x, num_y, num_z, delta_x, delta_y, delta_z, vel_x, vel_y, vel_z, delta_t
@@ -32,6 +34,7 @@ def setup_domain():
 # -------------------------------
 # 2. Temperature Initialization
 # -------------------------------
+# noinspection PyUnusedLocal
 def init_temperature(mode, num_x, num_y, num_z, delta_z):
     if mode == "blob":
         temp_field = np.zeros((num_x, num_y, num_z))
@@ -41,9 +44,11 @@ def init_temperature(mode, num_x, num_y, num_z, delta_z):
         for i in range(num_x):
             for j in range(num_y):
                 for k in range(num_z):
-                    if ((i - center_x) ** 2 / radius_x ** 2 +
-                        (j - center_y) ** 2 / radius_y ** 2 +
-                        (k - center_z) ** 2 / radius_z ** 2) <= 1.0:
+                    if (
+                            (i - center_x) ** 2 / radius_x ** 2 +
+                            (j - center_y) ** 2 / radius_y ** 2 +
+                            (k - center_z) ** 2 / radius_z ** 2
+                    ) <= 1.0:
                         temp_field[i, j, k] = 1.0
         return temp_field
 
@@ -179,7 +184,7 @@ def main():
     # plot_initial_slice(temp_field, z_index)
     # animate_vertical_slices(temp_field)  # optional
 
-    num_steps = 100
+    num_steps = 100 * DELTA_T_MULTIPLIER
     frame_list = advect_temperature(temp_field, num_x, num_y, num_z,
                                     delta_x, delta_y, delta_z,
                                     vel_x, vel_y, vel_z, delta_t, num_steps, z_index)
